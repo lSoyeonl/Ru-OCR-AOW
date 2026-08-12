@@ -6,4 +6,5 @@ openai>=1.0
 cryptography>=42
 paddleocr>=3.7,<3.8
 paddlepaddle>=3.2.1
+paddlex[ocr]
 pyinstaller>=6.0
