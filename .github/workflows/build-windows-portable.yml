@@ -18,9 +18,11 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
@@ -31,11 +33,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-build.txt
           pip check
+          python -c "import importlib.metadata as m; print('paddleocr', m.version('paddleocr')); print('paddlex', m.version('paddlex')); print('paddlepaddle', m.version('paddlepaddle'))"
 
       - name: Verify OCR dependencies before packaging
         shell: pwsh
         run: |
-          python -c "from paddlex.utils.deps import is_extra_available; assert is_extra_available('ocr'), 'PaddleX OCR extra is unavailable in build environment'"
+          python -c "from paddlex.utils.deps import is_extra_available; assert is_extra_available('ocr'), 'PaddleX OCR extra is unavailable in build environment'; print('OCR extra before packaging: OK')"
 
       - name: Build portable app
         shell: pwsh
@@ -46,9 +49,22 @@ jobs:
       - name: Verify OCR dependencies inside packaged EXE
         shell: pwsh
         run: |
-          & .\dist\Ru-OCR-AOW\Ru-OCR-AOW.exe --self-test-deps
-          if ($LASTEXITCODE -ne 0) {
-            throw "Packaged OCR dependency self-test failed with code $LASTEXITCODE"
+          $exe = Resolve-Path ".\dist\Ru-OCR-AOW\Ru-OCR-AOW.exe"
+          $proc = Start-Process -FilePath $exe -ArgumentList "--self-test-deps" -Wait -PassThru
+          $code = $proc.ExitCode
+
+          $report = ".\dist\Ru-OCR-AOW\ocr_self_test.json"
+          if (Test-Path $report) {
+            Write-Host "===== OCR SELF TEST REPORT ====="
+            Get-Content $report -Raw
+            Write-Host "================================"
+          }
+          else {
+            Write-Host "ocr_self_test.json was not created."
+          }
+
+          if ($code -ne 0) {
+            throw "Packaged OCR dependency self-test failed with exit code $code"
           }
 
       - name: Create portable ZIP
@@ -56,9 +72,10 @@ jobs:
         run: |
           Compress-Archive -Path dist/Ru-OCR-AOW/* -DestinationPath Ru-OCR-AOW-Windows-Portable.zip -Force
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload portable
+        uses: actions/upload-artifact@v4
         with:
-          name: Ru-OCR-AOW-Windows-Portable-v0.4-OCR-FIX
+          name: Ru-OCR-AOW-Windows-Portable-v0.5-OCR-FIX
           path: Ru-OCR-AOW-Windows-Portable.zip
           if-no-files-found: error
           retention-days: 30
