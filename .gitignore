@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.buildvenv/
+build/
+dist/
+user_data/
+settings.json
+.env

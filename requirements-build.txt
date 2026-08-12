@@ -1,0 +1,9 @@
+PyQt6>=6.7,<7
+Pillow>=10
+mss>=9
+keyboard>=0.13.5
+openai>=1.0
+cryptography>=42
+paddleocr>=3.7,<3.8
+paddlepaddle>=3.2.1
+pyinstaller>=6.0
