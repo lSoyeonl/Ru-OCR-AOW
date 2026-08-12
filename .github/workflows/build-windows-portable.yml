@@ -30,16 +30,35 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-build.txt
+          pip check
 
-      - name: Build
+      - name: Verify OCR dependencies before packaging
+        shell: pwsh
+        run: |
+          python -c "from paddlex.utils.deps import is_extra_available; assert is_extra_available('ocr'), 'PaddleX OCR extra is unavailable in build environment'"
+
+      - name: Build portable app
         shell: pwsh
         run: |
           pyinstaller --noconfirm --clean Ru-OCR-AOW.spec
           Copy-Item README_RU.md dist/Ru-OCR-AOW/README_RU.md
+
+      - name: Verify OCR dependencies inside packaged EXE
+        shell: pwsh
+        run: |
+          & .\dist\Ru-OCR-AOW\Ru-OCR-AOW.exe --self-test-deps
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged OCR dependency self-test failed with code $LASTEXITCODE"
+          }
+
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
           Compress-Archive -Path dist/Ru-OCR-AOW/* -DestinationPath Ru-OCR-AOW-Windows-Portable.zip -Force
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Ru-OCR-AOW-Windows-Portable
+          name: Ru-OCR-AOW-Windows-Portable-v0.4-OCR-FIX
           path: Ru-OCR-AOW-Windows-Portable.zip
+          if-no-files-found: error
           retention-days: 30
