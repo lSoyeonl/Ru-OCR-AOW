@@ -1,0 +1,45 @@
+name: Build Ru-OCR-AOW Windows Portable
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "**.py"
+      - "assets/**"
+      - "data/**"
+      - "license/**"
+      - "requirements-build.txt"
+      - "Ru-OCR-AOW.spec"
+      - ".github/workflows/build-windows-portable.yml"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-build.txt
+
+      - name: Build
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean Ru-OCR-AOW.spec
+          Copy-Item README_RU.md dist/Ru-OCR-AOW/README_RU.md
+          Compress-Archive -Path dist/Ru-OCR-AOW/* -DestinationPath Ru-OCR-AOW-Windows-Portable.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ru-OCR-AOW-Windows-Portable
+          path: Ru-OCR-AOW-Windows-Portable.zip
+          retention-days: 30
