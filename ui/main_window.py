@@ -19,17 +19,17 @@ from ui.overlay import TranslationOverlay
 LANGS=["Китайский (упрощ.)","Китайский (традиц.)","Тайский","Вьетнамский","Английский","Авто"]
 
 class Signals(QObject):
-    hotkey=pyqtSignal(str); result=pyqtSignal(object); failure=pyqtSignal(str); manual_result=pyqtSignal(str); hover_result=pyqtSignal(str,str,QPoint)
+    hotkey=pyqtSignal(str); result=pyqtSignal(object); failure=pyqtSignal(str); manual_result=pyqtSignal(str); hover_result=pyqtSignal(str,str,QPoint); progress=pyqtSignal(str)
 
 class MainWindow(QMainWindow):
     def __init__(self, settings, ocr, translator):
         super().__init__(); self.settings=settings; self.ocr=ocr; self.translator=translator
-        self.signals=Signals(); self.signals.hotkey.connect(self.handle_hotkey); self.signals.result.connect(self.on_result); self.signals.failure.connect(self.on_error); self.signals.manual_result.connect(self.on_manual_result); self.signals.hover_result.connect(self.on_hover_result)
+        self.signals=Signals(); self.signals.hotkey.connect(self.handle_hotkey); self.signals.result.connect(self.on_result); self.signals.failure.connect(self.on_error); self.signals.manual_result.connect(self.on_manual_result); self.signals.hover_result.connect(self.on_hover_result); self.signals.progress.connect(self.on_progress)
         self.selector=None; self.pending_action=None; self.busy=False; self.hover_busy=False; self.hover_enabled=False; self.last_hover_text=""; self.force_exit=False
         self.setWindowTitle("Ru - OCR AOW"); self.resize(470,690); self.setMinimumSize(440,640)
         self.setWindowIcon(QIcon(str(resource_path("assets/person.webp"))))
         self.build_ui(); self.build_tray(); self.install_hotkeys()
-        self.hover_timer=QTimer(self); self.hover_timer.timeout.connect(self.hover_tick); self.hover_timer.start(int(self.settings.get("hover_interval_ms",1300)))
+        self.hover_timer=QTimer(self); self.hover_timer.timeout.connect(self.hover_tick); self.hover_timer.start(int(self.settings.get("hover_interval_ms",1300))); QTimer.singleShot(700,self.warmup_ocr)
 
     def build_ui(self):
         self.setStyleSheet("""
@@ -109,7 +109,7 @@ class MainWindow(QMainWindow):
         elif action=="copy": self.select_copy()
 
     def quick_save_language(self,text):
-        self.settings["source_language"]=text; save_settings(self.settings)
+        self.settings["source_language"]=text; save_settings(self.settings); QTimer.singleShot(100,self.warmup_ocr)
 
     def select_translate(self): self.start_selector("translate")
     def select_copy(self): self.start_selector("copy")
@@ -133,11 +133,26 @@ class MainWindow(QMainWindow):
         lang=self.settings.get("source_language",self.lang.currentText())
         def work():
             try:
-                text,det,conf=self.ocr.recognize(image,lang)
+                text,det,conf=self.ocr.recognize(image,lang,lambda m:self.signals.progress.emit(m))
                 if not text: raise RuntimeError("Текст не найден. Попробуйте выделить область плотнее.")
                 trans=self.translator.translate(text,det,self.settings)
                 self.signals.result.emit((text,trans,det,conf,rect))
             except Exception as e: self.signals.failure.emit(str(e))
+        threading.Thread(target=work,daemon=True).start()
+
+    def on_progress(self, text):
+        self.status.setText(text)
+
+    def warmup_ocr(self):
+        lang=self.settings.get("source_language",self.lang.currentText())
+        if lang=="Авто":
+            return
+        def work():
+            try:
+                self.ocr.warmup(lang,lambda m:self.signals.progress.emit(m))
+                self.signals.progress.emit("OCR готов. Можно выделять текст.")
+            except Exception as e:
+                self.signals.progress.emit("OCR не подготовлен: "+str(e))
         threading.Thread(target=work,daemon=True).start()
 
     def on_result(self,data):
