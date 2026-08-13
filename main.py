@@ -88,8 +88,17 @@ def packaged_dependency_self_test() -> int:
 def packaged_ocr_model_self_test() -> int:
     report = {"ok": False}
     try:
+        from PIL import Image, ImageDraw
         from services.ocr_service import OCRService
+
         svc = OCRService()
+
+        # The oneDNN/PIR failure happens at predictor.run(), so merely creating
+        # the OCR engine is not enough. Run actual inference on a tiny image.
+        test_img = Image.new("RGB", (480, 120), "white")
+        draw = ImageDraw.Draw(test_img)
+        draw.text((20, 40), "OCR TEST 123", fill="black")
+
         tested = {}
         for label in (
             "Китайский (упрощ.)",
@@ -98,8 +107,14 @@ def packaged_ocr_model_self_test() -> int:
             "Английский",
         ):
             messages = []
-            svc.warmup(label, messages.append)
-            tested[label] = messages[-1] if messages else "OK"
+            text, lang, conf = svc.recognize(test_img, label, messages.append)
+            tested[label] = {
+                "lang": lang,
+                "confidence": conf,
+                "recognized": text,
+                "last_status": messages[-1] if messages else "",
+            }
+
         report["tested"] = tested
         report["ok"] = True
         code = 0
