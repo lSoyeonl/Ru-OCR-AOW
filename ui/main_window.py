@@ -25,7 +25,7 @@ class MainWindow(QMainWindow):
     def __init__(self, settings, ocr, translator):
         super().__init__(); self.settings=settings; self.ocr=ocr; self.translator=translator
         self.signals=Signals(); self.signals.hotkey.connect(self.handle_hotkey); self.signals.result.connect(self.on_result); self.signals.ocr_result.connect(self.on_ocr_result); self.signals.failure.connect(self.on_error); self.signals.manual_result.connect(self.on_manual_result); self.signals.hover_result.connect(self.on_hover_result); self.signals.progress.connect(self.on_progress)
-        self.selector=None; self.pending_action=None; self.busy=False; self.hover_busy=False; self.hover_enabled=False; self.last_hover_text=""; self.force_exit=False
+        self.selector=None; self.pending_action=None; self.busy=False; self.hover_busy=False; self.hover_enabled=False; self.last_hover_text=""; self.last_ocr_text=""; self.force_exit=False
         self.setWindowTitle("Ru - OCR AOW"); self.resize(470,690); self.setMinimumSize(440,640)
         self.setWindowIcon(QIcon(str(resource_path("assets/person.webp"))))
         self.build_ui(); self.build_tray(); self.install_hotkeys()
@@ -63,7 +63,14 @@ class MainWindow(QMainWindow):
         for i,(name,key,fn) in enumerate(actions):
             b=QPushButton((name+(f"\n{key}" if key else ""))); b.setMinimumHeight(62); b.clicked.connect(fn); grid.addWidget(b,i//2,i%2)
         lay.addLayout(grid)
-        statuscard=QFrame(); statuscard.setObjectName("card"); sv=QVBoxLayout(statuscard); sv.setContentsMargins(11,8,11,8); self.status=QLabel("Готово. Выберите действие."); self.status.setWordWrap(True); sv.addWidget(self.status); lay.addWidget(statuscard); lay.addStretch(); return w
+        statuscard=QFrame(); statuscard.setObjectName("card"); sv=QVBoxLayout(statuscard); sv.setContentsMargins(11,8,11,8); self.status=QLabel("Готово. Выберите действие."); self.status.setWordWrap(True); sv.addWidget(self.status); lay.addWidget(statuscard)
+
+        ocrcard=QFrame(); ocrcard.setObjectName("card"); ov=QVBoxLayout(ocrcard); ov.setContentsMargins(11,8,11,8)
+        ocrtitle=QLabel("Распознанный текст"); ocrtitle.setStyleSheet("font-weight:700;color:#56517f;"); ov.addWidget(ocrtitle)
+        self.ocr_preview=QPlainTextEdit(); self.ocr_preview.setReadOnly(True); self.ocr_preview.setPlaceholderText("После F8 распознанный текст появится здесь."); self.ocr_preview.setMaximumHeight(88); ov.addWidget(self.ocr_preview)
+        copy_ocr=QPushButton("Копировать распознанный текст"); copy_ocr.clicked.connect(self.copy_last_ocr); ov.addWidget(copy_ocr)
+        lay.addWidget(ocrcard)
+        lay.addStretch(); return w
 
     def translate_page(self):
         w=QWidget(); lay=QVBoxLayout(w); lay.setContentsMargins(16,16,16,16); lay.addWidget(self.page_title("Перевод внутри приложения"))
@@ -129,7 +136,7 @@ class MainWindow(QMainWindow):
         self.showNormal(); image=self.capture(rect)
         if self.pending_action=="copy":
             QApplication.clipboard().setImage(ImageQt(image)); self.status.setText("Выделенная область скопирована как изображение."); return
-        self.busy=True; self.status.setText("Распознаю текст…")
+        self.busy=True; self.last_ocr_text=""; self.ocr_preview.clear(); self.status.setText("Распознаю текст…")
         lang=self.settings.get("source_language",self.lang.currentText())
         def work():
             try:
@@ -173,7 +180,19 @@ class MainWindow(QMainWindow):
 
     def on_ocr_result(self,data):
         text,det,conf,rect=data
-        self.status.setText(f"OCR готов • {det} ~{conf:.0%}. Подготавливаю перевод…")
+        self.last_ocr_text=text.strip()
+        self.ocr_preview.setPlainText(self.last_ocr_text)
+        preview=self.last_ocr_text.replace("\n"," / ")
+        if len(preview)>90:
+            preview=preview[:87]+"..."
+        self.status.setText(f"OCR готов • {det} ~{conf:.0%} • {preview}")
+
+    def copy_last_ocr(self):
+        if not self.last_ocr_text:
+            self.status.setText("Сначала выполните OCR по области.")
+            return
+        QApplication.clipboard().setText(self.last_ocr_text)
+        self.status.setText("Распознанный текст скопирован в буфер обмена.")
 
     def on_result(self,data):
         self.busy=False; text,trans,det,conf,rect=data; self.status.setText(f"Готово • OCR {det} ~{conf:.0%}"); TranslationOverlay(text,trans,int(self.settings.get("overlay_seconds",10)),rect.bottomRight()+QPoint(10,10),self.settings.get("show_source_in_overlay",True))
