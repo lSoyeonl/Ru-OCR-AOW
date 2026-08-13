@@ -84,10 +84,50 @@ def packaged_dependency_self_test() -> int:
     return code
 
 
+
+def packaged_ocr_model_self_test() -> int:
+    report = {"ok": False}
+    try:
+        from services.ocr_service import OCRService
+        svc = OCRService()
+        tested = {}
+        for label in (
+            "Китайский (упрощ.)",
+            "Тайский",
+            "Вьетнамский",
+            "Английский",
+        ):
+            messages = []
+            svc.warmup(label, messages.append)
+            tested[label] = messages[-1] if messages else "OK"
+        report["tested"] = tested
+        report["ok"] = True
+        code = 0
+    except Exception as exc:
+        report["error"] = f"{type(exc).__name__}: {exc}"
+        import traceback
+        report["traceback"] = traceback.format_exc()
+        code = 31
+
+    try:
+        if getattr(sys, "frozen", False):
+            path = Path(sys.executable).resolve().parent / "ocr_model_self_test.json"
+        else:
+            path = Path.cwd() / "ocr_model_self_test.json"
+        path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+    return code
+
 def main():
     # Must run before Qt / licensing, so GitHub Actions can test the packaged EXE.
     if "--self-test-deps" in sys.argv:
         return packaged_dependency_self_test()
+    if "--self-test-ocr-models" in sys.argv:
+        return packaged_ocr_model_self_test()
 
     from PyQt6.QtWidgets import QApplication, QDialog
     from config import load_settings

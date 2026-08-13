@@ -22,6 +22,7 @@ datas = [
     ("assets", "assets"),
     ("data", "data"),
     ("license", "license"),
+    ("ocr_models", "ocr_models"),
 ]
 binaries = []
 hiddenimports = []

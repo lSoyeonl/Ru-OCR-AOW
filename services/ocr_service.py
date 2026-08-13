@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import threading
@@ -9,9 +10,8 @@ from typing import Callable, Dict, Optional, Tuple
 
 from PIL import Image, ImageEnhance
 
-# PaddleOCR 3.x downloads official models from HuggingFace by default.
-# For the Windows portable build we prefer Paddle's BOS mirror, which avoids
-# long "silent" waits when HuggingFace is slow or unavailable.
+from runtime_paths import resource_path
+
 os.environ.setdefault("PADDLE_PDX_MODEL_SOURCE", "BOS")
 
 LANG_MAP = {
@@ -23,7 +23,6 @@ LANG_MAP = {
 }
 
 AUTO_CANDIDATES = ["ch", "th", "vi", "en"]
-
 ProgressFn = Optional[Callable[[str], None]]
 
 
@@ -31,6 +30,17 @@ class OCRService:
     def __init__(self):
         self._engines: Dict[str, object] = {}
         self._engine_lock = threading.Lock()
+        self.models_root = resource_path("ocr_models")
+        self.manifest = self._load_manifest()
+
+    def _load_manifest(self) -> dict:
+        path = self.models_root / "model_manifest.json"
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise RuntimeError(f"Повреждён OCR manifest: {exc}") from exc
+        return {}
 
     @staticmethod
     def _progress(cb: ProgressFn, text: str) -> None:
@@ -40,19 +50,38 @@ class OCRService:
             except Exception:
                 pass
 
+    def _local_kwargs(self, lang: str) -> dict:
+        if not self.manifest:
+            return {}
+
+        det_name = self.manifest.get("det")
+        rec_name = (self.manifest.get("rec") or {}).get(lang)
+        if not det_name or not rec_name:
+            raise RuntimeError(f"В сборке не описана OCR-модель для языка: {lang}")
+
+        det_dir = self.models_root / det_name
+        rec_dir = self.models_root / rec_name
+        if not det_dir.exists():
+            raise RuntimeError(f"В сборке отсутствует OCR detection model: {det_name}")
+        if not rec_dir.exists():
+            raise RuntimeError(f"В сборке отсутствует OCR recognition model: {rec_name}")
+
+        return {
+            "text_detection_model_name": det_name,
+            "text_detection_model_dir": str(det_dir),
+            "text_recognition_model_name": rec_name,
+            "text_recognition_model_dir": str(rec_dir),
+        }
+
     def _get_engine(self, lang: str, progress: ProgressFn = None):
         if lang in self._engines:
             return self._engines[lang]
 
-        # Prevent hover + F8 from trying to initialize/download the same model twice.
+        self._progress(progress, "Запускаю локальную OCR-модель…")
+
         with self._engine_lock:
             if lang in self._engines:
                 return self._engines[lang]
-
-            self._progress(
-                progress,
-                "Подготавливаю OCR-модель… При первом запуске язык может загружаться 20–90 секунд."
-            )
 
             try:
                 from paddleocr import PaddleOCR
@@ -66,38 +95,32 @@ class OCRService:
                 use_doc_unwarping=False,
                 use_textline_orientation=False,
                 device="cpu",
-                # Mobile detection is much better suited to an interactive game overlay.
-                text_detection_model_name="PP-OCRv5_mobile_det",
             )
 
-            # The unified mobile recognizer supports Simplified Chinese,
-            # Traditional Chinese and English and is much lighter than server_rec.
-            if lang in {"ch", "chinese_cht", "en"}:
-                kwargs["text_recognition_model_name"] = "PP-OCRv5_mobile_rec"
+            local = self._local_kwargs(lang)
+            if local:
+                kwargs.update(local)
+            else:
+                # Development-only fallback. A released EXE should always have
+                # the manifest and local models and should never need the network.
+                kwargs["text_detection_model_name"] = "PP-OCRv5_mobile_det"
+                if lang in {"ch", "chinese_cht", "en"}:
+                    kwargs["text_recognition_model_name"] = "PP-OCRv5_mobile_rec"
 
             try:
                 engine = PaddleOCR(**kwargs)
-            except TypeError:
-                # Compatibility fallback if a future/older PaddleOCR build rejects
-                # the explicit mobile detector argument.
-                kwargs.pop("text_detection_model_name", None)
-                kwargs.pop("text_recognition_model_name", None)
-                engine = PaddleOCR(**kwargs)
+            except Exception as exc:
+                raise RuntimeError(f"Не удалось запустить OCR ({lang}): {exc}") from exc
 
             self._engines[lang] = engine
             self._progress(progress, "OCR-модель готова.")
             return engine
 
     def warmup(self, language_label: str, progress: ProgressFn = None) -> None:
-        """
-        Prepare the selected language in the background shortly after app start.
-        Auto mode is intentionally NOT preloaded because it would initialize
-        four language engines and can take several minutes on a fresh PC.
-        """
         if language_label == "Авто":
             self._progress(
                 progress,
-                "Режим «Авто» загружает несколько языков. Для игры быстрее выбрать язык вручную."
+                "Для игры выберите язык вручную: «Авто» проверяет несколько моделей."
             )
             return
         lang = LANG_MAP.get(language_label)
@@ -107,17 +130,13 @@ class OCRService:
     @staticmethod
     def preprocess(image: Image.Image) -> Image.Image:
         img = image.convert("RGB")
-
-        # Game UI text is often small. Upscale only genuinely small captures;
-        # avoid turning a large capture into millions of extra pixels.
         if img.width <= 700 and img.height <= 350:
             img = img.resize(
-                (int(img.width * 1.6), int(img.height * 1.6)),
+                (int(img.width * 1.8), int(img.height * 1.8)),
                 Image.Resampling.LANCZOS,
             )
-
-        img = ImageEnhance.Contrast(img).enhance(1.20)
-        img = ImageEnhance.Sharpness(img).enhance(1.25)
+        img = ImageEnhance.Contrast(img).enhance(1.25)
+        img = ImageEnhance.Sharpness(img).enhance(1.30)
         return img
 
     @staticmethod
@@ -127,7 +146,6 @@ class OCRService:
             try:
                 data = item.json
                 if isinstance(data, str):
-                    import json
                     data = json.loads(data)
                 res = data.get("res", data)
                 rec_texts = res.get("rec_texts", []) or []
@@ -147,7 +165,11 @@ class OCRService:
     def _run(self, image_path: Path, lang: str, progress: ProgressFn = None):
         engine = self._get_engine(lang, progress)
         self._progress(progress, "Распознаю текст…")
-        return self._parse_result(engine.predict(str(image_path)))
+        try:
+            result = engine.predict(str(image_path))
+        except Exception as exc:
+            raise RuntimeError(f"Ошибка OCR inference: {exc}") from exc
+        return self._parse_result(result)
 
     def recognize(
         self,
@@ -159,7 +181,6 @@ class OCRService:
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             path = Path(tmp.name)
-
         image.save(path)
 
         try:
@@ -168,18 +189,13 @@ class OCRService:
                 text, conf = self._run(path, lang, progress)
                 return text, lang, conf
 
-            self._progress(
-                progress,
-                "Автоопределение: проверяю несколько языков. Это медленнее ручного выбора."
-            )
             candidates = []
-
             for index, lang in enumerate(AUTO_CANDIDATES, start=1):
+                self._progress(
+                    progress,
+                    f"Автоопределение: модель {index}/{len(AUTO_CANDIDATES)}…"
+                )
                 try:
-                    self._progress(
-                        progress,
-                        f"Автоопределение языка: {index}/{len(AUTO_CANDIDATES)}…"
-                    )
                     text, conf = self._run(path, lang, progress)
                     quality = conf + min(len(text), 120) / 1500.0
                     candidates.append((quality, text, lang, conf))
@@ -187,11 +203,10 @@ class OCRService:
                     continue
 
             if not candidates:
-                raise RuntimeError("Не удалось запустить OCR-модели.")
+                raise RuntimeError("Ни одна OCR-модель не смогла обработать область.")
 
             candidates.sort(key=lambda x: x[0], reverse=True)
             _, text, lang, conf = candidates[0]
             return text, lang, conf
-
         finally:
             path.unlink(missing_ok=True)
