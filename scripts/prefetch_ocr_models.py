@@ -55,23 +55,51 @@ for lang, extra in REQUESTS:
     if lang in {"ch", "chinese_cht", "en"}:
         manifest["rec"][lang] = "PP-OCRv5_mobile_rec"
     else:
-        # Detection is already cached. The newly added recognizer is the rec model.
+        # PaddleOCR 3.7 may reuse one already-downloaded multilingual recognizer
+        # for several languages. Therefore `new_dirs` can legitimately be empty.
         rec_candidates = [n for n in new_dirs if "rec" in n.lower()]
+        all_rec = sorted(n for n in after if "rec" in n.lower())
+
         if not rec_candidates:
-            # Fallback: inspect all cached rec models and prefer a language prefix.
-            all_rec = sorted(n for n in after if "rec" in n.lower())
+            # First prefer an exact / language-prefixed model if Paddle supplies one.
             prefix = lang.lower() + "_"
             rec_candidates = [n for n in all_rec if n.lower().startswith(prefix)]
-            if not rec_candidates and lang == "vi":
-                # Some PaddleOCR builds map Vietnamese to a Latin recognizer.
-                rec_candidates = [n for n in all_rec if n.lower().startswith("latin_")]
+
+        if not rec_candidates and lang == "vi":
+            # Depending on the installed PaddleOCR/PaddleX release Vietnamese can
+            # be routed to a Latin recognizer or the newer shared multilingual rec.
+            rec_candidates = [n for n in all_rec if n.lower().startswith("latin_")]
+
+        if not rec_candidates:
+            # Current PaddleOCR 3.7/PaddleX 3.7 builds can select the shared
+            # PP-OCRv6 multilingual recognizer for both th and vi. It may already
+            # have been downloaded while initializing the previous language.
+            shared = [
+                n for n in all_rec
+                if n in {
+                    "PP-OCRv6_medium_rec",
+                    "PP-OCRv6_small_rec",
+                    "PP-OCRv6_tiny_rec",
+                }
+            ]
+            if shared:
+                # Prefer medium, then small, then tiny.
+                priority = {
+                    "PP-OCRv6_medium_rec": 3,
+                    "PP-OCRv6_small_rec": 2,
+                    "PP-OCRv6_tiny_rec": 1,
+                }
+                shared.sort(key=lambda n: priority.get(n, 0), reverse=True)
+                rec_candidates = [shared[0]]
 
         if not rec_candidates:
             raise RuntimeError(
                 f"Could not determine local recognition model for {lang}. "
                 f"New dirs: {new_dirs}; all cache: {sorted(after)}"
             )
-        manifest["rec"][lang] = rec_candidates[-1]
+
+        manifest["rec"][lang] = rec_candidates[0]
+        print(f"[prefetch] {lang} -> {manifest['rec'][lang]}")
 
 if not CACHE.exists():
     raise RuntimeError(f"PaddleX model cache not found: {CACHE}")
