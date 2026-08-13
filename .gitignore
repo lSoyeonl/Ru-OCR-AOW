@@ -6,3 +6,4 @@ dist/
 user_data/
 settings.json
 .env
+user_data/*.json

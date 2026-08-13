@@ -40,6 +40,15 @@ jobs:
         run: |
           python -c "from paddlex.utils.deps import is_extra_available; assert is_extra_available('ocr'), 'PaddleX OCR extra is unavailable in build environment'; print('OCR extra before packaging: OK')"
 
+      - name: Prepare offline OCR models
+        shell: pwsh
+        run: |
+          python scripts/prefetch_ocr_models.py
+          if (!(Test-Path ".\ocr_models\model_manifest.json")) {
+            throw "OCR model manifest was not created"
+          }
+          Get-Content ".\ocr_models\model_manifest.json" -Raw
+
       - name: Build portable app
         shell: pwsh
         run: |
@@ -67,6 +76,21 @@ jobs:
             throw "Packaged OCR dependency self-test failed with exit code $code"
           }
 
+      - name: Verify bundled OCR models inside packaged EXE
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path ".\dist\Ru-OCR-AOW\Ru-OCR-AOW.exe"
+          $proc = Start-Process -FilePath $exe -ArgumentList "--self-test-ocr-models" -Wait -PassThru
+          $report = ".\dist\Ru-OCR-AOW\ocr_model_self_test.json"
+          if (Test-Path $report) {
+            Write-Host "===== OCR MODEL SELF TEST ====="
+            Get-Content $report -Raw
+            Write-Host "==============================="
+          }
+          if ($proc.ExitCode -ne 0) {
+            throw "Bundled OCR model self-test failed with code $($proc.ExitCode)"
+          }
+
       - name: Create portable ZIP
         shell: pwsh
         run: |
@@ -75,7 +99,7 @@ jobs:
       - name: Upload portable
         uses: actions/upload-artifact@v4
         with:
-          name: Ru-OCR-AOW-Windows-Portable-v0.5-OCR-FIX
+          name: Ru-OCR-AOW-Windows-Portable-v0.6.3-OFFLINE-OCR
           path: Ru-OCR-AOW-Windows-Portable.zip
           if-no-files-found: error
           retention-days: 30

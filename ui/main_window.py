@@ -19,12 +19,12 @@ from ui.overlay import TranslationOverlay
 LANGS=["Китайский (упрощ.)","Китайский (традиц.)","Тайский","Вьетнамский","Английский","Авто"]
 
 class Signals(QObject):
-    hotkey=pyqtSignal(str); result=pyqtSignal(object); failure=pyqtSignal(str); manual_result=pyqtSignal(str); hover_result=pyqtSignal(str,str,QPoint); progress=pyqtSignal(str)
+    hotkey=pyqtSignal(str); result=pyqtSignal(object); ocr_result=pyqtSignal(object); failure=pyqtSignal(str); manual_result=pyqtSignal(str); hover_result=pyqtSignal(str,str,QPoint); progress=pyqtSignal(str)
 
 class MainWindow(QMainWindow):
     def __init__(self, settings, ocr, translator):
         super().__init__(); self.settings=settings; self.ocr=ocr; self.translator=translator
-        self.signals=Signals(); self.signals.hotkey.connect(self.handle_hotkey); self.signals.result.connect(self.on_result); self.signals.failure.connect(self.on_error); self.signals.manual_result.connect(self.on_manual_result); self.signals.hover_result.connect(self.on_hover_result); self.signals.progress.connect(self.on_progress)
+        self.signals=Signals(); self.signals.hotkey.connect(self.handle_hotkey); self.signals.result.connect(self.on_result); self.signals.ocr_result.connect(self.on_ocr_result); self.signals.failure.connect(self.on_error); self.signals.manual_result.connect(self.on_manual_result); self.signals.hover_result.connect(self.on_hover_result); self.signals.progress.connect(self.on_progress)
         self.selector=None; self.pending_action=None; self.busy=False; self.hover_busy=False; self.hover_enabled=False; self.last_hover_text=""; self.force_exit=False
         self.setWindowTitle("Ru - OCR AOW"); self.resize(470,690); self.setMinimumSize(440,640)
         self.setWindowIcon(QIcon(str(resource_path("assets/person.webp"))))
@@ -134,10 +134,26 @@ class MainWindow(QMainWindow):
         def work():
             try:
                 text,det,conf=self.ocr.recognize(image,lang,lambda m:self.signals.progress.emit(m))
-                if not text: raise RuntimeError("Текст не найден. Попробуйте выделить область плотнее.")
+                if not text:
+                    raise RuntimeError("Текст не найден. Попробуйте выделить область плотнее.")
+
+                # Show OCR result immediately. DeepSeek must never make the user
+                # think OCR itself has frozen.
+                self.signals.ocr_result.emit((text,det,conf,rect))
+
+                if not (self.settings.get("deepseek_api_key") or "").strip():
+                    self.signals.result.emit((
+                        text,
+                        "OCR выполнен. Для русского перевода укажите DeepSeek API key в «Настройки».",
+                        det,conf,rect
+                    ))
+                    return
+
+                self.signals.progress.emit("OCR готов. Перевожу через DeepSeek…")
                 trans=self.translator.translate(text,det,self.settings)
                 self.signals.result.emit((text,trans,det,conf,rect))
-            except Exception as e: self.signals.failure.emit(str(e))
+            except Exception as e:
+                self.signals.failure.emit(str(e))
         threading.Thread(target=work,daemon=True).start()
 
     def on_progress(self, text):
@@ -154,6 +170,10 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.signals.progress.emit("OCR не подготовлен: "+str(e))
         threading.Thread(target=work,daemon=True).start()
+
+    def on_ocr_result(self,data):
+        text,det,conf,rect=data
+        self.status.setText(f"OCR готов • {det} ~{conf:.0%}. Подготавливаю перевод…")
 
     def on_result(self,data):
         self.busy=False; text,trans,det,conf,rect=data; self.status.setText(f"Готово • OCR {det} ~{conf:.0%}"); TranslationOverlay(text,trans,int(self.settings.get("overlay_seconds",10)),rect.bottomRight()+QPoint(10,10),self.settings.get("show_source_in_overlay",True))
@@ -180,11 +200,21 @@ class MainWindow(QMainWindow):
 
     def manual_translate(self):
         text=self.manual_input.toPlainText().strip()
-        if not text: return
-        self.manual_output.setPlainText("Перевожу…"); lang_map={"Китайский (упрощ.)":"ch","Китайский (традиц.)":"chinese_cht","Тайский":"th","Вьетнамский":"vi","Английский":"en","Авто":"auto"}; src=lang_map.get(self.settings.get("source_language"),"auto")
+        if not text:
+            return
+        if not (self.settings.get("deepseek_api_key") or "").strip():
+            self.manual_output.setPlainText(
+                "DeepSeek пока не настроен. Откройте «Настройки», вставьте API key и нажмите «Сохранить настройки»."
+            )
+            return
+        self.manual_output.setPlainText("Перевожу через DeepSeek…")
+        lang_map={"Китайский (упрощ.)":"ch","Китайский (традиц.)":"chinese_cht","Тайский":"th","Вьетнамский":"vi","Английский":"en","Авто":"auto"}
+        src=lang_map.get(self.settings.get("source_language"),"auto")
         def work():
-            try: self.signals.manual_result.emit(self.translator.translate(text,src,self.settings,True))
-            except Exception as e: self.signals.manual_result.emit("Ошибка: "+str(e))
+            try:
+                self.signals.manual_result.emit(self.translator.translate(text,src,self.settings,True))
+            except Exception as e:
+                self.signals.manual_result.emit("Ошибка DeepSeek: "+str(e))
         threading.Thread(target=work,daemon=True).start()
     def on_manual_result(self,text): self.manual_output.setPlainText(text)
 

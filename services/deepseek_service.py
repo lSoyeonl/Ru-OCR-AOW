@@ -32,7 +32,7 @@ class DeepSeekService:
             from openai import OpenAI
         except Exception as exc:
             raise RuntimeError("В сборке отсутствует клиент API.") from exc
-        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com", timeout=25.0, max_retries=1)
         src = LANG_NAMES.get(source_lang, source_lang)
         context = settings.get("game_context", "")
         system = f"""Ты профессиональный переводчик и локализатор MMORPG Age of Wushu / 九阴真经.
