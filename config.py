@@ -5,6 +5,14 @@ from runtime_paths import SETTINGS_PATH
 DEFAULTS = {
     "source_language": "Китайский (упрощ.)",
     "target_language": "Русский",
+    "translation_mode": "auto",
+    "translator_priority": ["azure", "deepl", "gemini", "deepseek"],
+    "azure_translator_key": "",
+    "azure_translator_region": "",
+    "azure_translator_endpoint": "https://api.cognitive.microsofttranslator.com",
+    "deepl_api_key": "",
+    "gemini_api_key": "",
+    "gemini_model": "gemini-3.1-flash-lite",
     "deepseek_api_key": "",
     "deepseek_model": "deepseek-v4-flash",
     "global_hotkey_area": "f8",
@@ -28,9 +36,17 @@ def load_settings() -> dict:
             loaded = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
             if isinstance(loaded, dict): data.update(loaded)
         except Exception: pass
-    env_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
-    if env_key and not data.get("deepseek_api_key"):
-        data["deepseek_api_key"] = env_key
+    env_map = {
+        "AZURE_TRANSLATOR_KEY": "azure_translator_key",
+        "AZURE_TRANSLATOR_REGION": "azure_translator_region",
+        "DEEPL_API_KEY": "deepl_api_key",
+        "GEMINI_API_KEY": "gemini_api_key",
+        "DEEPSEEK_API_KEY": "deepseek_api_key",
+    }
+    for env_name, setting_name in env_map.items():
+        value = os.getenv(env_name, "").strip()
+        if value and not data.get(setting_name):
+            data[setting_name] = value
     return data
 
 def save_settings(data: dict) -> None:

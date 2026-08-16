@@ -147,7 +147,7 @@ def main():
     from PyQt6.QtWidgets import QApplication, QDialog
     from config import load_settings
     from services.ocr_service import OCRService
-    from services.deepseek_service import DeepSeekService
+    from services.translator_service import TranslationService
     from services.license_service import current_license
     from ui.activation_dialog import ActivationDialog
     from ui.main_window import MainWindow
@@ -165,7 +165,7 @@ def main():
             if dlg.exec() != QDialog.DialogCode.Accepted:
                 return 0
 
-    win = MainWindow(settings, OCRService(), DeepSeekService())
+    win = MainWindow(settings, OCRService(), TranslationService())
     win.show()
     return app.exec()
 
