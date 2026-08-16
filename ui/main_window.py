@@ -26,7 +26,7 @@ class MainWindow(QMainWindow):
         super().__init__(); self.settings=settings; self.ocr=ocr; self.translator=translator
         self.signals=Signals(); self.signals.hotkey.connect(self.handle_hotkey); self.signals.result.connect(self.on_result); self.signals.ocr_result.connect(self.on_ocr_result); self.signals.failure.connect(self.on_error); self.signals.manual_result.connect(self.on_manual_result); self.signals.hover_result.connect(self.on_hover_result); self.signals.progress.connect(self.on_progress)
         self.selector=None; self.pending_action=None; self.busy=False; self.hover_busy=False; self.hover_enabled=False; self.last_hover_text=""; self.last_ocr_text=""; self.force_exit=False
-        self.setWindowTitle("Ru - OCR AOW"); self.resize(470,690); self.setMinimumSize(440,640)
+        self.setWindowTitle("Ru - OCR AOW"); self.resize(500,760); self.setMinimumSize(460,680)
         self.setWindowIcon(QIcon(str(resource_path("assets/person.webp"))))
         self.build_ui(); self.build_tray(); self.install_hotkeys()
         self.hover_timer=QTimer(self); self.hover_timer.timeout.connect(self.hover_tick); self.hover_timer.start(int(self.settings.get("hover_interval_ms",1300))); QTimer.singleShot(700,self.warmup_ocr)
@@ -54,7 +54,7 @@ class MainWindow(QMainWindow):
         w=QWidget(); lay=QVBoxLayout(w); lay.setContentsMargins(14,14,14,14); lay.setSpacing(10)
         hero=QFrame(); hero.setObjectName("card"); hero.setMinimumHeight(210); hv=QHBoxLayout(hero); hv.setContentsMargins(16,10,6,0)
         left=QVBoxLayout(); title=QLabel("Ru - OCR AOW"); title.setStyleSheet("font-size:26px;font-weight:800;color:#514c88;"); left.addWidget(title)
-        sub=QLabel("OCR + перевод игрового текста\nна русский через DeepSeek"); sub.setStyleSheet("color:#686486;font-size:12px;"); left.addWidget(sub); left.addStretch(); hv.addLayout(left,1)
+        sub=QLabel("OCR + перевод игрового текста\nна русский через несколько сервисов"); sub.setStyleSheet("color:#686486;font-size:12px;"); left.addWidget(sub); left.addStretch(); hv.addLayout(left,1)
         person=QLabel(); pix=QPixmap(str(resource_path("assets/person.webp"))); person.setPixmap(pix.scaled(155,190,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation)); person.setAlignment(Qt.AlignmentFlag.AlignBottom|Qt.AlignmentFlag.AlignRight); hv.addWidget(person)
         lay.addWidget(hero)
         langrow=QHBoxLayout(); langrow.addWidget(QLabel("Язык текста:")); self.lang=QComboBox(); self.lang.addItems(LANGS); self.lang.setCurrentText(self.settings.get("source_language",LANGS[0])); self.lang.currentTextChanged.connect(self.quick_save_language); langrow.addWidget(self.lang,1); lay.addLayout(langrow)
@@ -75,14 +75,30 @@ class MainWindow(QMainWindow):
     def translate_page(self):
         w=QWidget(); lay=QVBoxLayout(w); lay.setContentsMargins(16,16,16,16); lay.addWidget(self.page_title("Перевод внутри приложения"))
         self.manual_input=QPlainTextEdit(); self.manual_input.setPlaceholderText("Вставьте китайский, тайский, вьетнамский или английский текст..."); lay.addWidget(QLabel("Исходный текст")); lay.addWidget(self.manual_input,1)
-        b=QPushButton("Перевести через DeepSeek"); b.clicked.connect(self.manual_translate); lay.addWidget(b)
+        b=QPushButton("Перевести"); b.clicked.connect(self.manual_translate); lay.addWidget(b)
         lay.addWidget(QLabel("Русский перевод")); self.manual_output=QPlainTextEdit(); self.manual_output.setReadOnly(True); lay.addWidget(self.manual_output,1); return w
 
     def settings_page(self):
         w=QWidget(); lay=QVBoxLayout(w); lay.setContentsMargins(16,16,16,16); lay.addWidget(self.page_title("Настройки")); form=QFormLayout()
         self.s_lang=QComboBox(); self.s_lang.addItems(LANGS); self.s_lang.setCurrentText(self.settings.get("source_language",LANGS[0])); form.addRow("Язык OCR",self.s_lang)
+        self.translation_mode=QComboBox()
+        self.translation_mode.addItem("Авто: Azure → DeepL → Gemini → DeepSeek", "auto")
+        self.translation_mode.addItem("Только Azure Translator", "azure")
+        self.translation_mode.addItem("Только DeepL", "deepl")
+        self.translation_mode.addItem("Только Gemini", "gemini")
+        self.translation_mode.addItem("Только DeepSeek", "deepseek")
+        wanted=self.settings.get("translation_mode","auto")
+        for i in range(self.translation_mode.count()):
+            if self.translation_mode.itemData(i)==wanted: self.translation_mode.setCurrentIndex(i); break
+        form.addRow("Переводчик",self.translation_mode)
+
+        self.azure_api=QLineEdit(self.settings.get("azure_translator_key","")); self.azure_api.setEchoMode(QLineEdit.EchoMode.Password); form.addRow("Azure Translator key",self.azure_api)
+        self.azure_region=QLineEdit(self.settings.get("azure_translator_region","")); self.azure_region.setPlaceholderText("например: westeurope"); form.addRow("Azure region",self.azure_region)
+        self.deepl_api=QLineEdit(self.settings.get("deepl_api_key","")); self.deepl_api.setEchoMode(QLineEdit.EchoMode.Password); form.addRow("DeepL API key",self.deepl_api)
+        self.gemini_api=QLineEdit(self.settings.get("gemini_api_key","")); self.gemini_api.setEchoMode(QLineEdit.EchoMode.Password); form.addRow("Gemini API key",self.gemini_api)
+        self.gemini_model=QComboBox(); self.gemini_model.setEditable(True); self.gemini_model.addItems(["gemini-3.1-flash-lite","gemini-3.6-flash"]); self.gemini_model.setCurrentText(self.settings.get("gemini_model","gemini-3.1-flash-lite")); form.addRow("Gemini model",self.gemini_model)
         self.api=QLineEdit(self.settings.get("deepseek_api_key","")); self.api.setEchoMode(QLineEdit.EchoMode.Password); form.addRow("DeepSeek API key",self.api)
-        self.model=QComboBox(); self.model.addItems(["deepseek-v4-flash","deepseek-v4-pro"]); self.model.setCurrentText(self.settings.get("deepseek_model","deepseek-v4-flash")); form.addRow("Модель",self.model)
+        self.model=QComboBox(); self.model.addItems(["deepseek-v4-flash","deepseek-v4-pro"]); self.model.setCurrentText(self.settings.get("deepseek_model","deepseek-v4-flash")); form.addRow("DeepSeek model",self.model)
         self.interval=QSpinBox(); self.interval.setRange(700,5000); self.interval.setSingleStep(100); self.interval.setValue(int(self.settings.get("hover_interval_ms",1300))); self.interval.setSuffix(" мс"); form.addRow("Наведение: интервал",self.interval)
         self.hw=QSpinBox(); self.hw.setRange(250,1000); self.hw.setValue(int(self.settings.get("hover_width",560))); form.addRow("Наведение: ширина",self.hw)
         self.hh=QSpinBox(); self.hh.setRange(80,500); self.hh.setValue(int(self.settings.get("hover_height",190))); form.addRow("Наведение: высота",self.hh)
@@ -148,15 +164,15 @@ class MainWindow(QMainWindow):
                 # think OCR itself has frozen.
                 self.signals.ocr_result.emit((text,det,conf,rect))
 
-                if not (self.settings.get("deepseek_api_key") or "").strip():
+                if not self.translator.has_configured_provider(self.settings):
                     self.signals.result.emit((
                         text,
-                        "OCR выполнен. Для русского перевода укажите DeepSeek API key в «Настройки».",
+                        "OCR выполнен. Для русского перевода настройте Azure, DeepL, Gemini или DeepSeek в разделе «Настройки».",
                         det,conf,rect
                     ))
                     return
 
-                self.signals.progress.emit("OCR готов. Перевожу через DeepSeek…")
+                self.signals.progress.emit("OCR готов. Перевожу…")
                 trans=self.translator.translate(text,det,self.settings)
                 self.signals.result.emit((text,trans,det,conf,rect))
             except Exception as e:
@@ -195,7 +211,10 @@ class MainWindow(QMainWindow):
         self.status.setText("Распознанный текст скопирован в буфер обмена.")
 
     def on_result(self,data):
-        self.busy=False; text,trans,det,conf,rect=data; self.status.setText(f"Готово • OCR {det} ~{conf:.0%}"); TranslationOverlay(text,trans,int(self.settings.get("overlay_seconds",10)),rect.bottomRight()+QPoint(10,10),self.settings.get("show_source_in_overlay",True))
+        self.busy=False; text,trans,det,conf,rect=data
+        provider=self.translator.provider_label() if self.translator.last_provider else "без перевода"
+        self.status.setText(f"Готово • OCR {det} ~{conf:.0%} • {provider}")
+        TranslationOverlay(text,trans,int(self.settings.get("overlay_seconds",10)),rect.bottomRight()+QPoint(10,10),self.settings.get("show_source_in_overlay",True))
     def on_error(self,msg): self.busy=False; self.hover_busy=False; self.status.setText("Ошибка: "+msg); QMessageBox.warning(self,"Ru - OCR AOW",msg)
 
     def toggle_hover(self):
@@ -213,32 +232,60 @@ class MainWindow(QMainWindow):
                 text=text.strip()
                 if len(text)<2 or text==self.last_hover_text: self.hover_busy=False; return
                 self.last_hover_text=text; trans=self.translator.translate(text,det,self.settings); self.signals.hover_result.emit(text,trans,pos)
-            except Exception: self.hover_busy=False
+            except Exception as e:
+                self.hover_busy=False
+                self.signals.progress.emit("Наведение: "+str(e))
         threading.Thread(target=work,daemon=True).start()
-    def on_hover_result(self,text,trans,pos): self.hover_busy=False; TranslationOverlay(text,trans,5,pos+QPoint(20,20),False)
+    def on_hover_result(self,text,trans,pos):
+        self.hover_busy=False
+        self.status.setText("Наведение • "+self.translator.provider_label())
+        TranslationOverlay(text,trans,5,pos+QPoint(20,20),False)
 
     def manual_translate(self):
         text=self.manual_input.toPlainText().strip()
         if not text:
             return
-        if not (self.settings.get("deepseek_api_key") or "").strip():
+        if not self.translator.has_configured_provider(self.settings):
             self.manual_output.setPlainText(
-                "DeepSeek пока не настроен. Откройте «Настройки», вставьте API key и нажмите «Сохранить настройки»."
+                "Переводчик пока не настроен. Откройте «Настройки» и добавьте ключ Azure, DeepL, Gemini или DeepSeek."
             )
             return
-        self.manual_output.setPlainText("Перевожу через DeepSeek…")
+        self.manual_output.setPlainText("Перевожу…")
         lang_map={"Китайский (упрощ.)":"ch","Китайский (традиц.)":"chinese_cht","Тайский":"th","Вьетнамский":"vi","Английский":"en","Авто":"auto"}
         src=lang_map.get(self.settings.get("source_language"),"auto")
         def work():
             try:
                 self.signals.manual_result.emit(self.translator.translate(text,src,self.settings,True))
             except Exception as e:
-                self.signals.manual_result.emit("Ошибка DeepSeek: "+str(e))
+                self.signals.manual_result.emit("Ошибка перевода: "+str(e))
         threading.Thread(target=work,daemon=True).start()
-    def on_manual_result(self,text): self.manual_output.setPlainText(text)
+    def on_manual_result(self,text):
+        self.manual_output.setPlainText(text)
+        if not text.startswith("Ошибка перевода:"):
+            self.status.setText("Переведено через "+self.translator.provider_label())
 
     def save_settings_ui(self):
-        self.settings.update({"source_language":self.s_lang.currentText(),"deepseek_api_key":self.api.text().strip(),"deepseek_model":self.model.currentText(),"hover_interval_ms":self.interval.value(),"hover_width":self.hw.value(),"hover_height":self.hh.value(),"author":self.author.text().strip() or "Укажите автора","author_url":self.author_url.text().strip() or "https://example.com"}); save_settings(self.settings); self.lang.setCurrentText(self.settings["source_language"]); self.hover_timer.setInterval(self.settings["hover_interval_ms"]); self.status.setText("Настройки сохранены.")
+        self.settings.update({
+            "source_language":self.s_lang.currentText(),
+            "translation_mode":self.translation_mode.currentData() or "auto",
+            "azure_translator_key":self.azure_api.text().strip(),
+            "azure_translator_region":self.azure_region.text().strip(),
+            "deepl_api_key":self.deepl_api.text().strip(),
+            "gemini_api_key":self.gemini_api.text().strip(),
+            "gemini_model":self.gemini_model.currentText().strip() or "gemini-3.1-flash-lite",
+            "deepseek_api_key":self.api.text().strip(),
+            "deepseek_model":self.model.currentText(),
+            "hover_interval_ms":self.interval.value(),
+            "hover_width":self.hw.value(),
+            "hover_height":self.hh.value(),
+            "author":self.author.text().strip() or "Укажите автора",
+            "author_url":self.author_url.text().strip() or "https://example.com"
+        })
+        save_settings(self.settings)
+        self.lang.setCurrentText(self.settings["source_language"])
+        self.hover_timer.setInterval(self.settings["hover_interval_ms"])
+        names=self.translator.configured_provider_names(self.settings)
+        self.status.setText("Настройки сохранены. Переводчики: "+(", ".join(names) if names else "не настроены"))
 
     def refresh_license_label(self):
         ok,msg,p=current_license(); extra=f" Владелец: {p.get('name','—')}" if ok else f" Код устройства: {get_device_code()}"; self.license_label.setText(("✓ " if ok else "⚠ ")+msg+extra)
